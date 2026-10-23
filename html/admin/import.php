@@ -297,7 +297,7 @@ if (isset($_GET['template'])) {
         // own columns filled in — makes it obvious which columns apply to
         // which platform_name.
         foreach ($allPlatforms as $p) {
-            $row = ['Region 1', 'Example School', $p['display_name'] . ' Example Room', $p['display_name']];
+            $row = ['ESU 17', 'Example School', $p['display_name'] . ' Example Room', $p['display_name']];
             foreach (array_slice($columns, 4) as $col) {
                 $row[] = ''; // left blank in the template; only the column names matter here
             }

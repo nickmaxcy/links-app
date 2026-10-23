@@ -20,10 +20,9 @@ foreach ($platforms as $p) {
 }
 
 $rows = $pdo->query('SELECT entity, school, device_name, platform_id, fields FROM devices')->fetchAll();
-$allowedEntities = get_allowed_entity_names($pdo, (int)current_admin_id(), (string)current_role());
-if ($allowedEntities !== null) {
-    $rows = array_values(array_filter($rows, fn($r) => in_array($r['entity'], $allowedEntities, true)));
-}
+// Entity Access restrictions (set on the Users page) gate write actions -
+// adding, editing, deleting - not viewing. Lookup always shows every
+// device to every logged-in account regardless of those restrictions.
 usort($rows, fn($a, $b) => strnatcasecmp($a['entity'], $b['entity'])
     ?: strnatcasecmp($a['school'], $b['school'])
     ?: strnatcasecmp($a['device_name'], $b['device_name']));

@@ -127,9 +127,13 @@ if (isset($_GET['deleted_entity'])) { $success = 'Entity deleted.'; }
 if (isset($_GET['added_school'])) { $success = 'School added.'; }
 if (isset($_GET['deleted_school'])) { $success = 'School deleted.'; }
 
+// Entity Access restrictions gate write actions only - every editor sees
+// every entity and school here. $addableEntities (restricted) feeds the
+// "Add School" dropdown; $entities (unrestricted) feeds the full listing.
 $entities = natsort_rows_by($pdo->query('SELECT id, name FROM entities')->fetchAll(), 'name');
+$addableEntities = $entities;
 if ($allowedEntities !== null) {
-    $entities = array_values(array_filter($entities, fn($e) => in_array($e['name'], $allowedEntities, true)));
+    $addableEntities = array_values(array_filter($entities, fn($e) => in_array($e['name'], $allowedEntities, true)));
 }
 
 $schoolsByEntityId = [];
@@ -163,7 +167,6 @@ window.onload = function() {
 
       schoolRows.forEach(function(row) {
         if (!q || entityMatches) {
-          // Entity itself matched (or no search active): show every school under it.
           row.style.display = '';
           if (!entityMatches) anySchoolMatches = true;
         } else {
@@ -197,7 +200,7 @@ window.onload = function() {
       <input type="hidden" name="action" value="add_entity">
       <div class="form-group">
         <label for="entity_name">Entity Name</label>
-        <input type="text" id="entity_name" name="entity_name" placeholder="e.g. Region 1" required>
+        <input type="text" id="entity_name" name="entity_name" placeholder="e.g. ESU 17" required>
       </div>
       <button type="submit">Add Entity</button>
     </form>
@@ -206,8 +209,10 @@ window.onload = function() {
 
   <div class="container">
     <h2>Add School</h2>
-    <?php if (empty($entities)): ?>
-      <p style="color: var(--text-muted); font-size: 0.9rem;">Add an entity first before adding a school to it.</p>
+    <?php if (empty($addableEntities)): ?>
+      <p style="color: var(--text-muted); font-size: 0.9rem;">
+        <?= empty($entities) ? 'Add an entity first before adding a school to it.' : 'You do not have write access to any entity yet - ask an admin to assign you one under Users.' ?>
+      </p>
     <?php else: ?>
       <form method="post" action="/admin/setup.php">
         <?= csrf_field() ?>
@@ -216,7 +221,7 @@ window.onload = function() {
           <label for="entity_id">Entity</label>
           <select id="entity_id" name="entity_id" required>
             <option value="">Select Entity</option>
-            <?php foreach ($entities as $e): ?>
+            <?php foreach ($addableEntities as $e): ?>
               <option value="<?= (int)$e['id'] ?>"><?= h($e['name']) ?></option>
             <?php endforeach; ?>
           </select>
@@ -239,10 +244,14 @@ window.onload = function() {
       <p style="color: var(--text-muted); font-size: 0.9rem;">No entities yet.</p>
     <?php endif; ?>
     <?php foreach ($entities as $e): ?>
+      <?php $canEditEntity = ($allowedEntities === null || in_array($e['name'], $allowedEntities, true)); ?>
       <div class="entity-block setup-entity-row" data-entity="<?= h(strtolower($e['name'])) ?>">
         <h3>
           <?= h($e['name']) ?>
           <span class="count-badge">(<?= $entityDeviceCounts[$e['name']] ?? 0 ?> device<?= (($entityDeviceCounts[$e['name']] ?? 0) === 1) ? '' : 's' ?>)</span>
+          <?php if (!$canEditEntity): ?>
+            <span class="count-badge">(view only)</span>
+          <?php endif; ?>
           <?php if ($myRole === 'admin'): ?>
           <form method="post" action="/admin/setup.php" onsubmit="return confirm('Delete entity &quot;<?= h(addslashes($e['name'])) ?>&quot;? This also removes its schools from the setup list.');" style="display:inline; margin-left:8px;">
             <?= csrf_field() ?>
@@ -260,12 +269,14 @@ window.onload = function() {
             <?php $cnt = $schoolDeviceCounts[$e['name'] . '|' . $s['name']] ?? 0; ?>
             <div class="school-row setup-school-row" data-school="<?= h(strtolower($s['name'])) ?>">
               <span><?= h($s['name']) ?> <span class="count-badge">(<?= $cnt ?> device<?= $cnt === 1 ? '' : 's' ?>)</span></span>
-              <form method="post" action="/admin/setup.php" onsubmit="return confirm('Delete school &quot;<?= h(addslashes($s['name'])) ?>&quot;?');" style="margin:0;">
-                <?= csrf_field() ?>
-                <input type="hidden" name="action" value="delete_school">
-                <input type="hidden" name="id" value="<?= (int)$s['id'] ?>">
-                <button type="submit" class="del-btn">Delete</button>
-              </form>
+              <?php if ($canEditEntity): ?>
+                <form method="post" action="/admin/setup.php" onsubmit="return confirm('Delete school &quot;<?= h(addslashes($s['name'])) ?>&quot;?');" style="margin:0;">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="delete_school">
+                  <input type="hidden" name="id" value="<?= (int)$s['id'] ?>">
+                  <button type="submit" class="del-btn">Delete</button>
+                </form>
+              <?php endif; ?>
             </div>
           <?php endforeach; ?>
         <?php endif; ?>

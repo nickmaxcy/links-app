@@ -1,36 +1,38 @@
 LINKS DIRECTORY — INSTALLATION GUIDE
 ===================================
 
-This is a self-hosted PHP + MySQL directory for tracking device
-connection info (video conferencing links, IPs, credentials, etc.)
-organized by Entity > School > Device — adaptable to any organization
-that needs a structured, permission-controlled connection directory,
-with role-based accounts, Single Sign-On, two-factor authentication,
-and CSV import.
+A self-hosted directory for tracking device connection info organized by
+Entity > School > Device, with role-based accounts, Single Sign-On,
+two-factor authentication, and CSV import.
 
 --------------------------------------------------------------------
 1. WHAT'S IN THIS PACKAGE
 --------------------------------------------------------------------
-docker-compose.yml       - the two/three container stack (web, db, tls-proxy)
+docker-compose.yml       - the full container stack: tls-proxy, php,
+                           web (nginx), db
 init.sql                 - full database schema for a FRESH install
-migration_*.sql          - individual historical migrations (only needed if
-                           you're upgrading an existing older database that
-                           predates this package — a fresh install only
-                           needs init.sql)
+migration_*.sql          - individual historical migrations (only needed
+                           if you're upgrading an existing older database
+                           - a fresh install only needs init.sql)
 .env.example             - copy this to .env and fill in real values
 deploy.sh                - convenience script: fixes file ownership/
-                           permissions and restarts the web container after
-                           you copy in new files
+                           permissions and restarts the php container
+                           after you copy in new files
 html/                    - the application itself
+php/                     - Dockerfile + php.ini for the PHP-FPM container
+                           (official php:8.4-fpm image + required
+                           extensions)
+nginx/                   - Dockerfile + default.conf for the nginx
+                           container (official nginx:alpine image),
+                           proxies .php requests to php:9000 over FastCGI
 tls-proxy/               - nginx + Certbot container for automatic HTTPS
-                           via DNS-01 challenge (currently wired for DNS
-                           Made Easy specifically — see note in section 4)
+                           via DNS-01 challenge (wired for DNS Made Easy
+                           specifically — see note in section 4)
 
 --------------------------------------------------------------------
 2. PREREQUISITES
 --------------------------------------------------------------------
-- A Linux host (this was built and tested on Debian) with Docker and
-  Docker Compose installed
+- A Linux host with Docker and Docker Compose installed
 - A domain name you control, with the ability to add DNS records
 - If using SSO: a Google Cloud Console project (and/or a Microsoft Entra
   tenant) to register an OAuth client
@@ -43,26 +45,27 @@ tls-proxy/               - nginx + Certbot container for automatic HTTPS
 1. Copy this entire folder to your server, e.g. /opt/links-app/
 2. cp .env.example .env
    chmod 600 .env
-3. Edit .env and fill in real values:
-   - DB_PASSWORD / DB_ROOT_PASSWORD: pick strong passwords
-   - INITIAL_ADMIN_USERNAME / INITIAL_ADMIN_PASSWORD: the first admin
-     account, auto-created on first boot if admin_users is empty
-   - DOMAIN: your actual domain
-   - LETSENCRYPT_EMAIL: a real email you check (Let's Encrypt expiry
-     notices)
-   - DNSMADEEASY_API_KEY / DNSMADEEASY_SECRET_KEY: only if you use DNS
-     Made Easy (see section 4 if you use a different DNS provider)
-   - SMTP_* : only needed if you want Forgot Password emails to work
-4. docker compose up -d
-   This builds/starts three containers: web (PHP-FPM + nginx), db
-   (MySQL), and tls-proxy (obtains and renews your TLS certificate).
-5. On first boot, the web container automatically runs init.sql against
-   an empty database and creates your initial admin account from the
-   .env values above.
-6. Visit https://yourdomain/ and log in with the initial admin account.
-7. Immediately go to Users and set a real password / consider enabling
+3. Edit .env and fill in real values (DB passwords, initial admin
+   account, your domain, SMTP, DNS provider credentials)
+4. Generate your encryption key and add it to .env as APP_ENCRYPTION_KEY:
+   openssl rand -base64 32
+   (or, once the php container is up: docker exec links-php php -r
+   "echo base64_encode(random_bytes(32));")
+5. docker compose build
+   docker compose up -d
+   This builds and starts four containers: tls-proxy (TLS termination),
+   php (PHP-FPM, runs your application code), web (nginx, serves static
+   files and proxies .php requests to php), and db (MySQL).
+6. On first boot, MySQL automatically runs init.sql against the empty
+   database (via docker-entrypoint-initdb.d), and the app itself creates
+   your initial admin account from the INITIAL_ADMIN_* env values the
+   first time anyone visits with an empty admin_users table.
+7. Visit https://yourdomain/ and log in with the initial admin account.
+8. Immediately go to Users and set a real password / consider enabling
    2FA on that account, since the .env password was just sitting in a
    plaintext file.
+9. Install the QR code library (required before the Security page's 2FA
+   setup will load) — see section 8.
 
 --------------------------------------------------------------------
 4. IF YOU DON'T USE DNS MADE EASY
@@ -79,64 +82,77 @@ Route53, DigitalOcean, etc.) via their own plugins. To swap providers:
 --------------------------------------------------------------------
 5. DEPLOYING CODE CHANGES LATER
 --------------------------------------------------------------------
-Standard flow for any file change:
+Standard flow for any PHP file change:
   scp <changed files> user@server:~/
   sudo mv ~/<file> /opt/links-app/html/<correct subfolder>/
   /opt/links-app/deploy.sh
 
-deploy.sh fixes ownership/permissions (the container's own entrypoint
-re-asserts ownership on every restart, which otherwise blocks you from
-re-editing files) and restarts the web container.
+deploy.sh fixes ownership/permissions (the php container runs as its own
+user, which needs read access to the app broadly and write access
+specifically to html/assets/ for uploads) and restarts the php
+container. nginx (the "web" container) almost never needs restarting for
+a plain code change, since it doesn't interpret PHP at all anymore — it
+only proxies to php.
 
-For a database change, copy the SQL file into the db container and run
-it with `source`, rather than piping through stdin with -it (the two
-don't mix):
+For a database change:
   docker cp migration_file.sql links-db:/tmp/
   docker exec -it links-db mysql -u root -p linksdb -e "source /tmp/migration_file.sql"
   docker exec links-db rm -f /tmp/migration_file.sql
 
+For diagnostics, PHP now lives in a separate container from nginx:
+  docker exec links-php php -v        (correct)
+  docker exec links-web php -v        (wrong - nginx has no PHP installed)
+
 --------------------------------------------------------------------
-6. FEATURE OVERVIEW
+6. KEEPING PHP AND NGINX PATCHED
 --------------------------------------------------------------------
-- Roles: Viewer (lookup only), Editor (+ Devices/Locations/Platforms,
-  optionally restricted to specific Entities), Admin (everything)
+Both php/Dockerfile and nginx/Dockerfile use floating base-image tags
+(php:8.4-fpm, nginx:alpine) rather than pinning an exact old version.
+Periodically (and especially after a PHP or nginx CVE disclosure), pull
+the latest patched release and rebuild:
+  docker compose build --no-cache php web
+  docker compose up -d --force-recreate php web
+Then confirm the version actually changed:
+  docker exec links-php php -v
+
+--------------------------------------------------------------------
+7. FEATURE OVERVIEW
+--------------------------------------------------------------------
+- Roles: Viewer (lookup only), Editor (Devices/Locations/Platforms - can
+  view everything, but only add/edit/delete within Entities an admin has
+  assigned them under Users), Admin (everything, unrestricted)
 - Platforms (Zoom/Teams/Meet/Polycom, or your own) each define their own
   custom fields, with per-field "hide from viewer" support
 - Import: CSV bulk import for Platforms, Devices, and Users
-- Forgot Password: email-based reset flow (requires SMTP configured)
-- Two-Factor Authentication: TOTP-based, with a QR code (via the
-  endroid/qr-code Composer package — see section 8 below, this must be
-  installed for the Security page to work) plus manual key entry as a
-  fallback
-- Single Sign-On: Google and/or Microsoft, multiple connections
-  supported simultaneously, each with its own allowed email domain and
-  optional per-email-prefix role assignment
+- Forgot Password: email-based reset flow, rate limited per IP
+- Two-Factor Authentication: TOTP-based, QR code (via endroid/qr-code)
+  plus manual key entry, rate limited against repeated bad codes
+- Single Sign-On: Google and/or Microsoft, multiple connections at once,
+  each with its own allowed domain and optional per-prefix role rules
 - Session timeout: 30 min default, 4-hour "stay logged in" option, with
-  a live countdown shown in the sidebar
+  a live countdown in the sidebar
 
 --------------------------------------------------------------------
 8. INSTALLING THE QR CODE LIBRARY (required for 2FA setup to work)
 --------------------------------------------------------------------
 The 2FA setup page generates its QR code using endroid/qr-code (backed by
-bacon/bacon-qr-code for the actual encoding) — a well-established,
-widely-used Composer package, not custom code. This must be installed
-before /security.php's 2FA setup screen will load.
+bacon/bacon-qr-code), a well-established Composer package. This must be
+installed before /security.php's 2FA setup screen will load.
 
-Check your container's PHP version first, since that determines which
-package version to install:
-  docker exec links-web php -v
+Check your container's PHP version first:
+  docker exec links-php php -v
 
-Then, from the host (not inside the web container), run Composer as a
-one-off tool against your html/ folder — this does not require Composer
-to be installed inside the web container itself:
+Then, from the host, run Composer as a one-off tool against html/ - this
+does not require Composer to be installed inside the php container
+itself:
   docker run --rm -v /opt/links-app/html:/app -w /app composer:latest require "endroid/qr-code:^4.0"
 
-(^4.0 works with PHP 8.1/8.2. If your container runs PHP 8.4+, you can
-use the latest version instead: drop the version constraint entirely.)
+(^4.0 works with PHP 8.1-8.4+. A fresh install can likely drop the
+version constraint entirely and get the latest release.)
 
 This creates composer.json, composer.lock, and a vendor/ folder inside
 html/ — commit the first two to version control, but add vendor/ to
-.gitignore and run `composer install` (via the same docker run pattern,
+.gitignore and run `composer install` (same docker run pattern,
 swapping `require ...` for `install`) after cloning instead.
 
 --------------------------------------------------------------------
@@ -145,22 +161,23 @@ swapping `require ...` for `install`) after cloning instead.
 SSO client secrets are encrypted at rest using a key that lives only in
 .env, never in the database. Generate your own (don't reuse an example
 you find anywhere, including this file):
-  docker exec links-web php -r "echo base64_encode(random_bytes(32));"
+  openssl rand -base64 32
 
 Put the result in .env as APP_ENCRYPTION_KEY. If you're adding this to
 an existing install that already has SSO connections saved from before
-this feature existed, you'll need to edit and re-save each one (re-enter
-its Client Secret) after deploying — their previously-stored plaintext
-secrets won't decrypt automatically.
+this feature existed, edit and re-save each one (re-enter its Client
+Secret) after deploying — previously-stored plaintext secrets won't
+decrypt automatically.
 
 Losing this key later means every saved SSO connection's secret becomes
 unreadable and needs to be re-entered — back it up like any other secret
 in .env.
 
 --------------------------------------------------------------------
-7. SECURITY REMINDERS BEFORE GOING LIVE
+10. SECURITY REMINDERS BEFORE GOING LIVE
 --------------------------------------------------------------------
 - Never commit .env to version control — only .env.example
 - Rotate any password that was ever typed into a chat, email, or ticket
 - Confirm only ports 80/443 are reachable from the internet
 - Back up regularly, and actually test a restore at least once
+- Rebuild php/nginx periodically per section 6, not just at install time

@@ -33,10 +33,10 @@ if (isset($_GET['added'])) { $success = 'Device added successfully.'; }
 if (isset($_GET['updated'])) { $success = 'Device updated successfully.'; }
 if (isset($_GET['deleted'])) { $success = 'Device deleted.'; }
 
+// Entity Access restrictions gate write actions only - every editor sees
+// every device here regardless of their assigned entities. Edit/Delete
+// controls are shown per-row based on access instead.
 $rows = $pdo->query('SELECT d.id, d.entity, d.school, d.device_name, d.platform_id, p.display_name AS platform_name FROM devices d JOIN platforms p ON p.id = d.platform_id')->fetchAll();
-if ($allowedEntities !== null) {
-    $rows = array_values(array_filter($rows, fn($r) => in_array($r['entity'], $allowedEntities, true)));
-}
 usort($rows, fn($a, $b) => strnatcasecmp($a['entity'], $b['entity'])
     ?: strnatcasecmp($a['school'], $b['school'])
     ?: strnatcasecmp($a['device_name'], $b['device_name']));
@@ -135,19 +135,24 @@ window.onload = function() {
       </thead>
       <tbody>
         <?php foreach ($rows as $row): ?>
+          <?php $canEdit = ($allowedEntities === null || in_array($row['entity'], $allowedEntities, true)); ?>
           <tr data-entity="<?= h($row['entity']) ?>" data-school="<?= h($row['school']) ?>" data-name="<?= h(strtolower($row['device_name'])) ?>">
             <td data-label="Entity"><?= h($row['entity']) ?></td>
             <td data-label="School"><?= h($row['school']) ?></td>
             <td data-label="Device"><?= h($row['device_name']) ?></td>
             <td data-label="Platform"><?= h($row['platform_name']) ?></td>
             <td class="actions">
-              <a class="edit-link" href="/admin/device-form.php?id=<?= (int)$row['id'] ?>">Edit</a>
-              <form method="post" action="/admin/devices.php" onsubmit="return confirm('Delete &quot;<?= h(addslashes($row['device_name'])) ?>&quot;? This cannot be undone.');" style="margin:0; display:inline;">
-                <?= csrf_field() ?>
-                <input type="hidden" name="action" value="delete_device">
-                <input type="hidden" name="id" value="<?= (int)$row['id'] ?>">
-                <button type="submit" class="del-btn">Delete</button>
-              </form>
+              <?php if ($canEdit): ?>
+                <a class="edit-link" href="/admin/device-form.php?id=<?= (int)$row['id'] ?>">Edit</a>
+                <form method="post" action="/admin/devices.php" onsubmit="return confirm('Delete &quot;<?= h(addslashes($row['device_name'])) ?>&quot;? This cannot be undone.');" style="margin:0; display:inline;">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="delete_device">
+                  <input type="hidden" name="id" value="<?= (int)$row['id'] ?>">
+                  <button type="submit" class="del-btn">Delete</button>
+                </form>
+              <?php else: ?>
+                <span style="color: var(--text-muted); font-size: 0.8rem;">View only</span>
+              <?php endif; ?>
             </td>
           </tr>
         <?php endforeach; ?>

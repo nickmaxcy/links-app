@@ -19,21 +19,14 @@ services:
     networks:
       - links-net
 
-  web:
-    image: richarvey/nginx-php-fpm:latest
-    container_name: links-web
+  php:
+    build:
+      context: ./php
+    container_name: links-php
     restart: unless-stopped
     volumes:
       - ./html:/var/www/html
     environment:
-      - SKIP_COMPOSER=1
-      - WEBROOT=/var/www/html
-      - PHP_ERRORS_STDERR=1
-      - RUN_SCRIPTS=1
-      - REAL_IP_HEADER=0
-      - APP_ENV=production
-      - APP_DEBUG=false
-      - APP_NAME=LinksApp
       - DB_HOST=db
       - DB_NAME=${DB_NAME}
       - DB_USER=${DB_USER}
@@ -50,6 +43,18 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - links-net
+
+  web:
+    build:
+      context: ./nginx
+    container_name: links-web
+    restart: unless-stopped
+    volumes:
+      - ./html:/var/www/html:ro
+    depends_on:
+      - php
     networks:
       - links-net
 

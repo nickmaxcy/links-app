@@ -1,158 +1,90 @@
--- Schema for a fresh deployment. Platforms (Zoom, Teams, Meet, Polycom) are
--- seeded with sensible default fields so there's something to work with
--- immediately; devices/entities/schools start empty. Add your own via
--- /admin/setup.php and /admin/devices.php after first boot, and manage
--- platforms (including adding new ones or editing field lists) via
--- /admin/platforms.php.
-
-CREATE TABLE IF NOT EXISTS platforms (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    platform_key VARCHAR(50) NOT NULL UNIQUE,
-    display_name VARCHAR(100) NOT NULL,
-    logo_path VARCHAR(255) DEFAULT NULL,
-    field_schema JSON NOT NULL,
-    sort_order INT NOT NULL DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-INSERT IGNORE INTO platforms (platform_key, display_name, logo_path, field_schema, sort_order) VALUES
-('zoom', 'Zoom', 'platform-logos/zoom.png', JSON_ARRAY(
-    JSON_OBJECT('key','meeting_id','label','Meeting ID','type','text','required', false),
-    JSON_OBJECT('key','personal_link','label','Personal Link','type','url','required', false,'prefix','https://us02web.zoom.us/my/'),
-    JSON_OBJECT('key','resource_name','label','Resource Name','type','text','required', false),
-    JSON_OBJECT('key','installed','label','Installed','type','yesno','required', false)
-), 1),
-('teams', 'Microsoft Teams', 'platform-logos/teams.png', JSON_ARRAY(
-    JSON_OBJECT('key','meeting_link','label','Meeting Link','type','url','required', false),
-    JSON_OBJECT('key','room_email','label','Room Email','type','text','required', false),
-    JSON_OBJECT('key','installed','label','Installed','type','yesno','required', false)
-), 2),
-('meet', 'Google Meet', 'platform-logos/meet.png', JSON_ARRAY(
-    JSON_OBJECT('key','meeting_code','label','Meeting Code','type','text','required', false),
-    JSON_OBJECT('key','meeting_link','label','Meeting Link','type','url','required', false),
-    JSON_OBJECT('key','installed','label','Installed','type','yesno','required', false)
-), 3),
-('polycom', 'Polycom', 'platform-logos/polycom.png', JSON_ARRAY(
-    JSON_OBJECT('key','ip_address','label','IP Address','type','ip','required', false),
-    JSON_OBJECT('key','subnet','label','Subnet Mask','type','text','required', false),
-    JSON_OBJECT('key','gateway','label','Gateway','type','ip','required', false),
-    JSON_OBJECT('key','touchscreen_ip','label','Touchscreen IP','type','ip','required', false)
-), 4);
-
 CREATE TABLE IF NOT EXISTS devices (
     id INT AUTO_INCREMENT PRIMARY KEY,
     entity VARCHAR(100) NOT NULL,
     school VARCHAR(150) NOT NULL,
     device_name VARCHAR(150) NOT NULL,
-    platform_id INT NOT NULL,
-    fields JSON NOT NULL,
+    device_type ENUM('zoom','polycom') NOT NULL,
+    meeting_id VARCHAR(50) DEFAULT NULL,
+    personal_link VARCHAR(255) DEFAULT NULL,
+    resource_name VARCHAR(255) DEFAULT NULL,
+    installed VARCHAR(10) DEFAULT NULL,
+    ip_address VARCHAR(150) DEFAULT NULL,
+    subnet VARCHAR(50) DEFAULT NULL,
+    gateway VARCHAR(50) DEFAULT NULL,
+    touchscreen_ip VARCHAR(150) DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     KEY idx_entity (entity),
-    KEY idx_entity_school (entity, school),
-    FOREIGN KEY (platform_id) REFERENCES platforms(id)
+    KEY idx_entity_school (entity, school)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS entities (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(100) NOT NULL UNIQUE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS schools (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    entity_id INT NOT NULL,
-    name VARCHAR(150) NOT NULL,
-    UNIQUE KEY uniq_entity_school (entity_id, name),
-    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS login_attempts (
-    ip VARCHAR(45) PRIMARY KEY,
-    attempts INT NOT NULL DEFAULT 0,
-    last_attempt DATETIME NULL,
-    locked_until DATETIME NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS audit_log (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    action VARCHAR(50) NOT NULL,
-    username VARCHAR(50) NULL,
-    details TEXT,
-    ip VARCHAR(45),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    KEY idx_created_at (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS admin_users (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(50) NOT NULL UNIQUE,
-    email VARCHAR(255) NULL,
-    password_hash VARCHAR(255) NULL,
-    role ENUM('viewer','editor','admin') NOT NULL DEFAULT 'admin',
-    sso_connection_id INT NULL,
-    sso_subject VARCHAR(255) NULL,
-    totp_secret VARCHAR(64) NULL,
-    totp_enabled TINYINT(1) NOT NULL DEFAULT 0,
-    must_reset_password TINYINT(1) NOT NULL DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_login DATETIME NULL,
-    UNIQUE KEY uniq_sso_identity (sso_connection_id, sso_subject)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS sso_connections (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    provider ENUM('google','microsoft') NOT NULL,
-    display_name VARCHAR(100) NOT NULL,
-    icon_path VARCHAR(255) NULL,
-    client_id VARCHAR(255) NOT NULL,
-    client_secret VARCHAR(255) NOT NULL,
-    tenant_id VARCHAR(255) NULL,
-    allowed_domain VARCHAR(255) NULL,
-    default_role ENUM('viewer','editor','admin') NOT NULL DEFAULT 'viewer',
-    prefix_rules JSON NULL,
-    enabled TINYINT(1) NOT NULL DEFAULT 1,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-ALTER TABLE admin_users ADD CONSTRAINT fk_admin_users_sso_connection FOREIGN KEY (sso_connection_id) REFERENCES sso_connections(id) ON DELETE SET NULL;
-
-CREATE TABLE IF NOT EXISTS user_entity_access (
-    user_id INT NOT NULL,
-    entity_id INT NOT NULL,
-    PRIMARY KEY (user_id, entity_id),
-    FOREIGN KEY (user_id) REFERENCES admin_users(id) ON DELETE CASCADE,
-    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS password_resets (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
-    token_hash VARCHAR(255) NOT NULL,
-    expires_at DATETIME NOT NULL,
-    used TINYINT(1) NOT NULL DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    KEY idx_token_hash (token_hash),
-    FOREIGN KEY (user_id) REFERENCES admin_users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS totp_attempts (
-    user_id INT PRIMARY KEY,
-    attempts INT NOT NULL DEFAULT 0,
-    last_attempt DATETIME NULL,
-    locked_until DATETIME NULL,
-    FOREIGN KEY (user_id) REFERENCES admin_users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS password_reset_requests (
-    ip VARCHAR(45) PRIMARY KEY,
-    attempts INT NOT NULL DEFAULT 0,
-    last_attempt DATETIME NULL,
-    locked_until DATETIME NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS app_settings (
-    setting_key VARCHAR(100) PRIMARY KEY,
-    setting_value TEXT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-INSERT IGNORE INTO app_settings (setting_key, setting_value)
-VALUES ('zoom_link_prefix', 'https://us02web.zoom.us/my/');
+INSERT INTO devices (entity, school, device_name, device_type, meeting_id, personal_link, resource_name, installed, ip_address, subnet, gateway, touchscreen_ip) VALUES
+('ESU 10', 'Arnold', 'ESU10 Arnold', 'zoom', '763 362 7665', 'https://us02web.zoom.us/my/arnoldzr', 'Your Organization-ZR-Arnold (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 15', 'Chase Co.', 'ESU15 Chase Co.', 'zoom', '763 362 4273', 'https://us02web.zoom.us/my/chaseco', 'Your Organization-ZR-Chase County (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 15', 'Dundy Co.', 'G700 Cart', 'polycom', NULL, NULL, NULL, NULL, '204.234.184.230', NULL, NULL, NULL),
+('ESU 15', 'Dundy Co.', 'M Cart', 'polycom', NULL, NULL, NULL, NULL, '204.234.184.232', NULL, NULL, NULL),
+('ESU 15', 'Dundy Co.', 'ESU15 Dundy Co.', 'zoom', '763 363 8639', 'https://us02web.zoom.us/my/dundyco', 'Your Organization-ZR-Dundy County (16)', 'No', NULL, NULL, NULL, NULL),
+('ESU 15', 'Hayes Center', 'ESU15 Hayes Center', 'zoom', '763 364 2937', 'https://us02web.zoom.us/my/hayescenter', 'Your Organization-ZR-Hayes Center (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 15', 'Hitchcock Co.', 'ESU15 Hitchcock Co.', 'zoom', '763 364 4824', 'https://us02web.zoom.us/my/hitchcockco', 'Your Organization-ZR-Hitchcock County (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 15', 'Maywood', 'ESU15 Maywood', 'zoom', '763 366 2996', 'https://us02web.zoom.us/my/maywood', 'Your Organization-ZR-Maywood (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 15', 'McCook', 'G700 Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.251.82', '255.255.0.0', '172.18.200.1', NULL),
+('ESU 15', 'McCook', 'Elem Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.219.125', '255.255.0.0', '172.18.200.1', NULL),
+('ESU 15', 'McCook', 'ESU15 McCook HS', 'zoom', '763 366 2266', 'https://us02web.zoom.us/my/mccookzr', 'Your Organization-ZR-McCook (16)', 'No', NULL, NULL, NULL, NULL),
+('ESU 15', 'Med Valley', 'DL Room', 'polycom', NULL, NULL, NULL, NULL, '162.127.251.114', '255.255.255.240', '162.127.251.126', '162.127.251.113'),
+('ESU 15', 'Med Valley', 'ESU15 Med. Valley', 'zoom', '763 366 3382', 'https://us02web.zoom.us/my/medicinevalley', 'Your Organization-ZR-Medicine Valley (16)', 'No', NULL, NULL, NULL, NULL),
+('ESU 15', 'Southwest', 'DL Room', 'polycom', NULL, NULL, NULL, NULL, '162.127.251.146', '255.255.255.240', '162.127.251.158', '162.127.251.145'),
+('ESU 15', 'Southwest', 'M Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.251.147', '255.255.255.240', '162.127.251.158', NULL),
+('ESU 15', 'Southwest', 'ESU15 Southwest', 'zoom', '763 367 9378', 'https://us02web.zoom.us/my/southwestzr', 'Your Organization-ZR-Southwest (16)', 'No', NULL, NULL, NULL, NULL),
+('ESU 15', 'Wau-Pa.', 'G700 Cart', 'polycom', NULL, NULL, NULL, NULL, '204.234.186.49', NULL, NULL, NULL),
+('ESU 15', 'Wau-Pa.', 'ESU15 Wauneta-Palisade', 'zoom', NULL, NULL, NULL, 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'Arthur', 'ESU16 Arthur', 'zoom', '763 362 7848', 'https://us02web.zoom.us/my/arthurzr', 'Your Organization-ZR-Arthur (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'Brady', 'ESU16 Brady', 'zoom', '763 362 7239', 'https://us02web.zoom.us/my/bradyzr', 'Your Organization-ZR-Brady (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'ESU 16', 'SSCNP Tech Office', 'polycom', NULL, NULL, NULL, NULL, '162.127.231.7', '255.255.255.240', '162.127.231.14', '162.127.231.6'),
+('ESU 16', 'ESU 16', 'ESU16 Oga Zoom Room', 'zoom', '763 363 7816', 'https://us02web.zoom.us/my/esu16oga', 'Your Organization-ZR-ESU16 Oga (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'ESU 16', 'ESU16 Oga DL Zoom Room', 'zoom', '763 366 4235', 'https://us02web.zoom.us/my/ogadl', 'Your Organization-ZR-ESU16 Oga DL', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'ESU 16', 'ESU16 SSCNP Conf', 'zoom', '763 366 7263', 'https://us02web.zoom.us/my/sscnpconf', 'Your Organization-ZR-SSCNP Conference Room (65)', 'yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'ESU 16', 'ESU16 SSCNP BR', 'zoom', '763 366 7271', 'https://us02web.zoom.us/my/sscnpbr', 'Your Organization-ZR-ESU16 BR (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'ESU 16', 'ESU16 SSCNP', 'zoom', '763 367 7267', 'https://zoom.us/my/sscnp', 'Your Organization-ZR-ESU16 SSCNP (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'Hershey', 'M Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.35', '255.255.255.240', '162.127.230.46', NULL),
+('ESU 16', 'Hershey', 'ESU16 Hershey', 'zoom', '763 364 3774', 'https://us02web.zoom.us/my/hersheyzr', 'Your Organization-ZR-Hershey (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'Hyannis', 'DL Room', 'polycom', NULL, NULL, NULL, NULL, '204.234.198.57', NULL, NULL, '204.234.198.58'),
+('ESU 16', 'Hyannis', 'Hyannis_HS_G700_Cart_1', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.60', '255.255.255.240', '162.127.230.62', NULL),
+('ESU 16', 'Hyannis', 'ESU16 Hyannis', 'zoom', '763 364 9266', 'https://us02web.zoom.us/my/hyannis', 'Your Organization-ZR-Hyannis (16)', 'No', NULL, NULL, NULL, NULL),
+('ESU 16', 'Maxwell', 'M Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.83', '255.255.255.240', '162.127.230.94', NULL),
+('ESU 16', 'Maxwell', 'ESU16 Maxwell', 'zoom', '763 369 2993', 'https://us02web.zoom.us/my/maxwellzr', 'Your Organization-ZR-Maxwell (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'McPherson Co.', 'G700 Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.66', '255.255.255.240', '162.127.230.78', NULL),
+('ESU 16', 'McPherson Co.', 'M Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.67', '255.255.255.240', '162.127.230.78', NULL),
+('ESU 16', 'McPherson Co.', 'ESU16 McPherson Co.', 'zoom', '763 366 2743', 'https://us02web.zoom.us/my/mcphersonco', 'Your Organization-ZR-McPherson County (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'Mullen', 'G700 Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.101', '255.255.255.240', '162.127.230.110', NULL),
+('ESU 16', 'Mullen', 'G700 HS Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.99', '255.255.255.240', '162.127.230.110', NULL),
+('ESU 16', 'Mullen', 'Elem Cart', 'polycom', NULL, NULL, NULL, NULL, '204.234.202.3', '255.255.252.0', '204.234.202.254', NULL),
+('ESU 16', 'Mullen', 'ESU16 Mullen', 'zoom', '763 366 8553', 'https://us02web.zoom.us/my/mullenhs', 'Your Organization-ZR-Mullen (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'North Platte HS', 'G700 Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.32.91', NULL, NULL, NULL),
+('ESU 16', 'North Platte HS', 'Jefferson M Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.32.82', NULL, NULL, NULL),
+('ESU 16', 'North Platte HS', 'ESU16 North Platte HS', 'zoom', '763 366 7773', 'https://us02web.zoom.us/my/nppsd', 'Your Organization-ZR-NPPSD (16)', 'No', NULL, NULL, NULL, NULL),
+('ESU 16', 'Paxton', 'ESU16 Paxton', 'zoom', '763 367 2986', 'https://us02web.zoom.us/my/paxtonzr', 'Your Organization-ZR-Paxton (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'Paxton', 'G700 Library Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.150', '255.255.255.240', '162.127.230.158', NULL),
+('ESU 16', 'Paxton', 'M Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.147', '255.255.255.240', '162.127.230.158', NULL),
+('ESU 16', 'Perkins Co.', 'DL Room', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.164', '255.255.255.240', '162.127.230.174', '162.127.230.163'),
+('ESU 16', 'Perkins Co.', 'G700 Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.224.122', NULL, NULL, NULL),
+('ESU 16', 'Perkins Co.', 'M Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.224.123', NULL, NULL, NULL),
+('ESU 16', 'Perkins Co.', 'JR High Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.224.121', '255.255.255.240', '162.127.230.174', NULL),
+('ESU 16', 'Perkins Co.', 'ESU16 Perkins Co.', 'zoom', '763 367 3754', 'https://us02web.zoom.us/my/perkinsco', 'Your Organization-ZR-Perkins County (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'South Platte', 'ESU16 South Platte', 'zoom', '763 367 7528', 'https://us02web.zoom.us/my/southplatte', 'Your Organization-ZR-South Platte (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'Stapleton', 'DL Room', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.194', '255.255.255.240', '162.127.230.206', '162.127.230.193'),
+('ESU 16', 'Stapleton', 'M Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.195', '255.255.255.240', '162.127.230.206', NULL),
+('ESU 16', 'Stapleton', 'ESU16 Stapleton', 'zoom', '763 367 8275', 'https://us02web.zoom.us/my/stapleton', 'Your Organization-ZR-Stapleton (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'Sutherland', 'G700 Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.210', '255.255.255.240', '162.127.230.222', NULL),
+('ESU 16', 'Sutherland', 'M Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.211', '255.255.255.240', '162.127.230.222', NULL),
+('ESU 16', 'Sutherland', 'ESU16 Sutherland', 'zoom', '763 367 8843', 'https://us02web.zoom.us/my/sutherlandzr', 'Your Organization-ZR-Sutherland (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'Thedford', 'ESU16 Thedford', 'zoom', '763 368 4333', 'https://us02web.zoom.us/my/thedford', 'Your Organization-ZR-Thedford (16)', 'Yes', NULL, NULL, NULL, NULL),
+('ESU 16', 'Wallace', 'G700 Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.242', '255.255.255.240', '162.127.230.254', NULL),
+('ESU 16', 'Wallace', 'M Cart', 'polycom', NULL, NULL, NULL, NULL, '162.127.230.243', '255.255.255.240', '162.127.230.1', NULL),
+('ESU 16', 'Wallace', 'ESU16 Wallace', 'zoom', '763 369 2552', 'https://us02web.zoom.us/my/wallacezr', 'Your Organization-ZR-Wallace (16)', 'Yes', NULL, NULL, NULL, NULL),
+('Resources', 'Servers', 'Renovo', 'polycom', NULL, NULL, NULL, NULL, 'www.dlevents.ne.gov/VideoManager/', NULL, NULL, NULL),
+('Resources', 'Servers', 'New Bridge', 'polycom', NULL, NULL, NULL, NULL, '162.127.16.213', NULL, NULL, NULL),
+('Resources', 'Servers', 'Old Bridge', 'polycom', NULL, NULL, NULL, NULL, '162.127.16.203', NULL, NULL, '1'),
+('Resources', 'Servers', 'Media Suite Admin', 'polycom', NULL, NULL, NULL, NULL, '162.127.16.210/admin/login.jsf', NULL, NULL, NULL),
+('Resources', 'Servers', 'Media Suite User', 'polycom', NULL, NULL, NULL, NULL, '162.127.16.210/userportal/login.html', NULL, NULL, NULL),
+('Resources', 'Servers', 'Resource Manager', 'polycom', NULL, NULL, NULL, NULL, '162.127.16.212', NULL, NULL, NULL),
+('Resources', 'Servers', 'DMA Call Manager', 'polycom', NULL, NULL, NULL, NULL, '162.127.16.211', NULL, NULL, NULL),
+('Resources', 'Servers', 'TMS Nebraska Bridge', 'polycom', NULL, NULL, NULL, NULL, 'tms.nebraska.gov/', NULL, NULL, NULL);
